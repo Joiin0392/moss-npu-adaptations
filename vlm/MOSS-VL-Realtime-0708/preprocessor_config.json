@@ -1,0 +1,27 @@
+{
+    "auto_map": {
+        "AutoProcessor": "processing_moss_vl.MossVLProcessor",
+        "AutoImageProcessor": "processing_moss_vl.MossVLImageProcessorFast"
+    },
+    "size": {
+        "longest_edge": 16777216,
+        "shortest_edge": 4096
+    },
+    "multi_image_max_pixels": 65536000,
+    "patch_size": 16,
+    "temporal_patch_size": 1,
+    "merge_size": 2,
+    "image_mean": [
+        0.5,
+        0.5,
+        0.5
+    ],
+    "image_std": [
+        0.5,
+        0.5,
+        0.5
+    ],
+    "processor_class": "MossVLProcessor",
+    "image_processor_type": "MossVLImageProcessorFast",
+    "interpolation": "BICUBIC"
+}
