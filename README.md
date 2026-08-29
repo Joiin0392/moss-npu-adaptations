@@ -54,8 +54,10 @@ The default VLM files target transformers 4.57.1 (the upstream Demo pin).
 `vlm/MOSS-VL-Realtime-0708-tf5x/` holds a 2-file overlay adding 5.x support:
 OutputRecorder import fallback, RoPE inv_freq load-corruption self-repair
 (text+vision), `create_causal_mask` dual signature, `_get_initial_cache_position`
-fallback, `pad_token_id` config field. None of it is needed on 4.57; all of it
-is version-guarded on 5.x.
+fallback, `pad_token_id` config field. `tts/MOSS-TTS-Nano-100M-tf5x/` adds the
+gpt2_decoder `_base/_dim` repair metadata (consumed by the Demo-side compat
+branch's post-load repair). None of it is needed on 4.57.x; all of it is
+version-guarded on 5.x. Apply with `--tf5x` after the base files.
 
 ## Compatibility matrix
 

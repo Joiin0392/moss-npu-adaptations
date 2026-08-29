@@ -52,6 +52,15 @@ class MossTTSNanoGPT2RotaryEmbedding(nn.Module):
             raise ValueError(f"RoPE head_dim must be even, got {dim}")
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        # repair metadata: transformers' from_pretrained (meta-device loading)
+        # can clobber non-persistent buffers with zeros/garbage — the runtime's
+        # post-load repair and forward() below use these to restore the
+        # correct values (see the CPU adaptation's "cicici noise" root cause).
+        self._base = float(base)
+        self._dim = int(dim)
+
+    def _compute_inv_freq(self) -> torch.Tensor:
+        return 1.0 / (self._base ** (torch.arange(0, self._dim, 2, dtype=torch.float32, device="cpu") / self._dim))
 
     def forward(
         self,
@@ -61,7 +70,10 @@ class MossTTSNanoGPT2RotaryEmbedding(nn.Module):
         dtype: torch.dtype,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # NOTE: no in-forward inv_freq guard — a data-dependent .item() branch
-        # breaks torchair's fullgraph compile (gb0170).
+        # breaks torchair's fullgraph compile (gb0170). transformers 4.57.6
+        # does not clobber non-persistent buffers on load (the 5.x behavior
+        # that motivated the CPU-side guard), and the runtime's post-load
+        # repair remains as a belt-and-braces via the _base/_dim attrs above.
         if position_ids.ndim == 1:
             position_ids = position_ids.unsqueeze(0)
         freqs = torch.einsum("bs,d->bsd", position_ids.to(device=device, dtype=self.inv_freq.dtype), self.inv_freq)

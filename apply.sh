@@ -25,10 +25,14 @@ if 'interpolation' not in c:
 }
 
 apply_tts() {
-    local dst="$1"
+    local dst="$1" tf5x="${2:-}"
     [ -d "$dst/MOSS-TTS-Nano-100M" ] || { echo "TTS dir not found"; exit 1; }
     echo "Applying TTS adaptations → $dst"
     cp "$DIR"/tts/MOSS-TTS-Nano-100M/*.py "$dst/MOSS-TTS-Nano-100M/"
+    if [ "$tf5x" = "--tf5x" ]; then
+        echo "Applying transformers-5.x compat overlay → $dst/MOSS-TTS-Nano-100M"
+        cp "$DIR"/tts/MOSS-TTS-Nano-100M-tf5x/*.py "$dst/MOSS-TTS-Nano-100M/"
+    fi
     cp "$DIR"/tts/MOSS-Audio-Tokenizer-Nano/*.py "$dst/MOSS-Audio-Tokenizer-Nano/"
     rm -rf ~/.cache/huggingface/modules/transformers_modules/MOSS_hyphen_TTS_hyphen_Nano 2>/dev/null || true
     rm -rf ~/.cache/huggingface/modules/transformers_modules/MOSS_hyphen_Audio_hyphen_Tokenizer_hyphen_Nano 2>/dev/null || true
@@ -37,11 +41,11 @@ apply_tts() {
 
 case "${1:-}" in
     --vlm)  apply_vlm "$2" "${3:-}" ;;
-    --tts)  apply_tts "$2" ;;
+    --tts)  apply_tts "$2" "${3:-}" ;;
     --all)  apply_vlm "$2"; apply_tts "$3" ;;
     *)
-        echo "Usage: $0 --vlm <dir> [--tf5x] | --tts <dir> | --all <vlm> [--tf5x] <tts>"
-        echo "  default targets transformers 4.57.1 (upstream Demo pin);"
+        echo "Usage: $0 --vlm <dir> [--tf5x] | --tts <dir> [--tf5x] | --all <vlm> [--tf5x] <tts>"
+        echo "  default targets transformers 4.57.x (upstream Demo pin);"
         echo "  --tf5x overlays the transformers 5.x compatibility files."
         exit 2 ;;
 esac
