@@ -44,7 +44,10 @@ from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs, auto_docstring, is_torchdynamo_compiling, logging
 from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import OutputRecorder
+try:
+    from transformers.utils.generic import OutputRecorder
+except ImportError:
+    from transformers.utils.output_capturing import OutputRecorder
 
 from .configuration_moss_vl import MossVLConfig, MossVLTextConfig, MossVLVisionConfig
 import copy
@@ -209,11 +212,14 @@ class MossVLVisionRotaryEmbedding(nn.Module):
 
     def __init__(self, dim: int, theta: float = 10000.0) -> None:
         super().__init__()
-        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
+        inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=torch.float, device="cpu") / dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self._inv_freq_clean = inv_freq.clone()
 
     def forward(self, seqlen: int) -> torch.Tensor:
-        seq = torch.arange(seqlen, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+        if torch.isnan(self.inv_freq).any() or torch.isinf(self.inv_freq).any():
+            self.inv_freq = self._inv_freq_clean.to(self.inv_freq.device)
+        seq = torch.arange(seqlen, dtype=self.inv_freq.dtype, device=self.inv_freq.device)
         freqs = torch.outer(seq, self.inv_freq)
         return freqs
 
@@ -445,11 +451,22 @@ class MossVLTextRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
+        if self.rope_type == "default" or self.rope_type not in ROPE_INIT_FUNCTIONS:
+            import torch as _torch
+            base = config.rope_theta if hasattr(config, "rope_theta") else 10000.0
+            head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+            inv_freq = 1.0 / (base ** (_torch.arange(0, head_dim, 2, device="cpu").float() / head_dim))
+            self.attention_scaling = 1.0
+        else:
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+            inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
+
+        # Guard: from_pretrained may corrupt inv_freq with garbage from the
+        # state dict (persistent=False buffers can still be overwritten during
+        # weight loading on some transformers versions). Re-validate on forward.
+        self._inv_freq_computed = inv_freq.clone()
 
 
         if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
@@ -477,6 +494,10 @@ class MossVLTextRotaryEmbedding(nn.Module):
     @torch.no_grad()
     @dynamic_rope_update
     def forward(self, x, position_ids):
+        # Guard: from_pretrained can corrupt inv_freq — restore from clean copy
+        if torch.isnan(self.inv_freq).any() or torch.isinf(self.inv_freq).any():
+            self.inv_freq = self._inv_freq_computed.to(self.inv_freq.device)
+            self.original_inv_freq = self._inv_freq_computed.to(self.inv_freq.device)
 
         if position_ids.ndim == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
@@ -1169,14 +1190,26 @@ class MossVLTextModel(MossVLPreTrainedModel):
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
 
-        attention_mask = create_causal_mask(
-            config=self.config,
-            input_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            cache_position=cache_position,
-            past_key_values=past_key_values,
-            position_ids=position_ids,
-        )
+        # dual-version: transformers 5.x renamed input_embeds→inputs_embeds and
+        # dropped cache_position; 4.57 (this checkpoint's native line, per
+        # config.json transformers_version 4.57.3) uses the old kwargs.
+        try:
+            attention_mask = create_causal_mask(
+                config=self.config,
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                position_ids=position_ids,
+            )
+        except TypeError:
+            attention_mask = create_causal_mask(
+                config=self.config,
+                input_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                cache_position=cache_position,
+                past_key_values=past_key_values,
+                position_ids=position_ids,
+            )
 
         hidden_states = inputs_embeds
 
@@ -3545,8 +3578,10 @@ class MossVLForConditionalGeneration(MossVLPreTrainedModel, GenerationMixin):
         invalid_token_id = invalid_candidates[0] if invalid_candidates and invalid_candidates[0] is not None else -1
 
         # Bootstrap cache_position from the prefill input_ids length.
-        # transformers 4.57: signature is (seq_length, device, model_kwargs).
-        model_kwargs = self._get_initial_cache_position(input_ids.shape[1], input_ids.device, model_kwargs)
+        if hasattr(self, '_get_initial_cache_position'):
+            model_kwargs = self._get_initial_cache_position(input_ids.shape[1], input_ids.device, model_kwargs)
+        else:
+            model_kwargs["cache_position"] = torch.arange(input_ids.shape[1], device=input_ids.device)
 
         is_prefill = True
         current_token_start_time = time.time()

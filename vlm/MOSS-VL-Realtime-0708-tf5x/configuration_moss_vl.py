@@ -91,6 +91,7 @@ class MossVLTextConfig(PretrainedConfig):
         attention_dropout=0.0,
         # Cross attention specific
         cross_attention_layers=None,  # List of layer indices to insert cross attention
+        pad_token_id=None,
         **kwargs,
     ):
 
@@ -115,6 +116,7 @@ class MossVLTextConfig(PretrainedConfig):
         self.rope_scaling = rope_scaling
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
+        self.pad_token_id = pad_token_id
 
         rope_config_validation(self, ignore_keys={"mrope_section", "mrope_interleaved"})
         self.cross_attention_layers = cross_attention_layers or [2, 6, 10, 14, 18, 22, 26, 30, 34, 38, 42, 46]

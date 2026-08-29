@@ -3,10 +3,15 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 apply_vlm() {
-    local dst="$1"
+    local dst="$1" tf5x="${2:-}"
     [ -d "$dst" ] || { echo "VLM dir not found: $dst"; exit 1; }
     echo "Applying VLM adaptations → $dst"
     cp "$DIR"/vlm/MOSS-VL-Realtime-0708/*.py "$dst/"
+    if [ "$tf5x" = "--tf5x" ]; then
+        # transformers 5.x compatibility overlay (see vlm/MOSS-VL-Realtime-0708-tf5x/)
+        echo "Applying transformers-5.x compat overlay → $dst"
+        cp "$DIR"/vlm/MOSS-VL-Realtime-0708-tf5x/*.py "$dst/"
+    fi
     python3 -c "
 import json
 p = '$dst/preprocessor_config.json'
@@ -31,8 +36,12 @@ apply_tts() {
 }
 
 case "${1:-}" in
-    --vlm)  apply_vlm "$2" ;;
+    --vlm)  apply_vlm "$2" "${3:-}" ;;
     --tts)  apply_tts "$2" ;;
     --all)  apply_vlm "$2"; apply_tts "$3" ;;
-    *)      echo "Usage: $0 --vlm <dir> | --tts <dir> | --all <vlm> <tts>"; exit 2 ;;
+    *)
+        echo "Usage: $0 --vlm <dir> [--tf5x] | --tts <dir> | --all <vlm> [--tf5x] <tts>"
+        echo "  default targets transformers 4.57.1 (upstream Demo pin);"
+        echo "  --tf5x overlays the transformers 5.x compatibility files."
+        exit 2 ;;
 esac

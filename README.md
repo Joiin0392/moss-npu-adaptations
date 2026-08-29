@@ -40,9 +40,22 @@ keeping **CUDA/GPU behavior unchanged** (all NPU paths are guarded by
 ## Usage
 
 ```bash
+# default: NPU adaptation for transformers 4.57.1 (upstream Demo pin)
 ./apply.sh --vlm /path/to/MOSS-VL-Realtime-0708
 ./apply.sh --tts /path/to/models/tts
+
+# if your environment runs transformers 5.x, add the compat overlay
+./apply.sh --vlm /path/to/MOSS-VL-Realtime-0708 --tf5x
 ```
+
+## transformers 5.x compatibility layer
+
+The default VLM files target transformers 4.57.1 (the upstream Demo pin).
+`vlm/MOSS-VL-Realtime-0708-tf5x/` holds a 2-file overlay adding 5.x support:
+OutputRecorder import fallback, RoPE inv_freq load-corruption self-repair
+(text+vision), `create_causal_mask` dual signature, `_get_initial_cache_position`
+fallback, `pad_token_id` config field. None of it is needed on 4.57; all of it
+is version-guarded on 5.x.
 
 ## Compatibility matrix
 
