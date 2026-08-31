@@ -3104,8 +3104,11 @@ class MossVLForConditionalGeneration(MossVLPreTrainedModel, GenerationMixin):
                     break
 
             if self.continue_generating and should_wait_for_new_input and not frames_to_process and not prompts_to_process:
-                # Busy-wait — matches VideoMllama reference. Caller controls cadence via
-                # `max_tokens_per_turn` sleeping in `_real_time_sample`.
+                # GIL-friendly wait: a bare `continue` busy-spin monopolizes the GIL
+                # and starves in-process siblings (in-process ASR decode inflates
+                # ~150ms -> 40-80s while a realtime session idles in <|silence|>).
+                # 20ms poll keeps input-detection latency negligible.
+                time.sleep(0.02)
                 continue
             break
 

@@ -6,7 +6,7 @@
 
 ## 一、vlm/MOSS-VL-Realtime-0708/（4.57 主线）
 
-**modeling_moss_vl.py** — `empty_cache` NPU 感知：NPU 会话结束后释放 HBM，GPU 路径不变
+**modeling_moss_vl.py** — ① `empty_cache` NPU 感知：NPU 会话结束后释放 HBM，GPU 路径不变；② realtime 空闲态 busy-wait（`while True: continue`，VideoMllama 参考实现）改 20ms sleep 轮询：裸忙转独占 GIL，同进程的 ASR 解码被饿死（实测 150ms→40-80s，独立进程单忙转线程复现 73× 放大；修复后 132-152ms）。该缺陷存在于 HF stock checkpoint，GPU 部署同样受影响
 ```diff
 @@ -2874,8 +2874,13 @@
  
@@ -24,129 +24,20 @@
          self.continue_generating = False
  
      @staticmethod
-```
-
-**processing_moss_vl.py** — ① NPU 张量上限 8 维：视觉 patch 的 10D permute 在 CPU 中转再搬回（CUDA 原生 10D 不进分支）② `interpolation="BICUBIC"` 默认值：stock 的 preprocessor_config 没写，NPU 图像预处理退化成 BILINEAR
-```diff
-@@ -49,24 +49,28 @@
-     """
-     # Multi-image batch total pixels limit (read from config)
-     multi_image_max_pixels = None
--    
-+
-+    def __init__(self, *args, **kwargs):
-+        super().__init__(*args, **kwargs)
-+        if not hasattr(self, 'interpolation') or self.interpolation is None:
-+            self.interpolation = "BICUBIC"
+@@ -3099,8 +3104,11 @@
+                     break
  
-     def _preprocess(
-         self,
-         images: list["torch.Tensor"],
-         do_resize: bool,
-         size: SizeDict,
--        interpolation: Optional["F.InterpolationMode"],
--        do_rescale: bool,
--        rescale_factor: float,
--        do_normalize: bool,
--        image_mean: Optional[Union[float, list[float]]],
--        image_std: Optional[Union[float, list[float]]],
--        patch_size: int,
--        temporal_patch_size: int,
--        merge_size: int,
--        disable_grouping: Optional[bool],
--        return_tensors: Optional[Union[str, TensorType]],
-+        interpolation: Optional["F.InterpolationMode"] = None,
-+        do_rescale: bool = True,
-+        rescale_factor: float = 1 / 255,
-+        do_normalize: bool = True,
-+        image_mean: Optional[Union[float, list[float]]] = None,
-+        image_std: Optional[Union[float, list[float]]] = None,
-+        patch_size: int = 16,
-+        temporal_patch_size: int = 1,
-+        merge_size: int = 2,
-+        disable_grouping: Optional[bool] = None,
-+        return_tensors: Optional[Union[str, TensorType]] = None,
-         **kwargs,
-     ):
-         """Override _preprocess to use custom smart_resize with batch-level max_pixels.
-@@ -164,12 +168,17 @@
-             )
-             # Reorder dimensions to group grid and patch information for subsequent flattening.
-             # (batch, grid_t, grid_h, grid_w, merge_h, merge_w, channel, temp_patch_size, patch_h, patch_w)
-+            # NPU supports max 8D tensors; route the 10D permute+reshape through
-+            # CPU there. CUDA handles 10D natively — keep it on-device.
-+            patches_device = patches.device
-+            if patches_device.type == "npu":
-+                patches = patches.cpu()
-             patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
-             flatten_patches = patches.reshape(
-                 batch_size,
-                 grid_t * grid_h * grid_w,
-                 channel * temporal_patch_size * patch_size * patch_size,
--            )
-+            ).to(patches_device)
+             if self.continue_generating and should_wait_for_new_input and not frames_to_process and not prompts_to_process:
+-                # Busy-wait — matches VideoMllama reference. Caller controls cadence via
+-                # `max_tokens_per_turn` sleeping in `_real_time_sample`.
++                # GIL-friendly wait: a bare `continue` busy-spin monopolizes the GIL
++                # and starves in-process siblings (in-process ASR decode inflates
++                # ~150ms -> 40-80s while a realtime session idles in <|silence|>).
++                # 20ms poll keeps input-detection latency negligible.
++                time.sleep(0.02)
+                 continue
+             break
  
-             processed_images_grouped[shape] = flatten_patches
-             processed_grids[shape] = [[grid_t, grid_h, grid_w]] * batch_size
-@@ -272,7 +281,7 @@
-     patch_size: Optional[int]
-     temporal_patch_size: Optional[int]
-     merge_size: Optional[int]
--
-+    interpolation: Optional[str]
- 
- 
- class MossVLVideosKwargs(VideosKwargs, total=False):
-```
-
-**video_processing_moss_vl.py** — 同上 10D permute CPU 中转（视频路径）
-```diff
-@@ -1147,12 +1147,17 @@
-                 merge_size,
-                 patch_size,
-             )
-+            patches_device = patches.device
-+            # NPU: max 8D tensors — route the 10D permute+reshape through CPU.
-+            # CUDA handles 10D natively — keep it on-device.
-+            if patches_device.type == "npu":
-+                patches = patches.cpu()
-             patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
-             flatten_patches = patches.reshape(
-                 batch_size,
-                 grid_t * grid_h * grid_w,
-                 channel * temporal_patch_size * patch_size * patch_size,
--            )
-+            ).to(patches_device)
- 
-             processed_videos_grouped[shape] = flatten_patches
-             processed_grids[shape] = [[grid_t, grid_h, grid_w]] * batch_size
-```
-
-**preprocessor_config.json** — 补 `interpolation: BICUBIC`（配套 processing 的默认值）
-```diff
-@@ -22,5 +22,6 @@
-         0.5
-     ],
-     "processor_class": "MossVLProcessor",
--    "image_processor_type": "MossVLImageProcessorFast"
-+    "image_processor_type": "MossVLImageProcessorFast",
-+    "interpolation": "BICUBIC"
- }
-\ No newline at end of file
-```
-
----
-
-## 二、vlm/MOSS-VL-Realtime-0708-tf5x/（transformers 5.x overlay，2 文件）
-
-> 仅 5.x 环境需要（`apply.sh --tf5x`）。根因：5.x 的 meta-device 加载不跑 `__init__` 的
-> 真实计算，非 persistent buffer（RoPE inv_freq）留下 denormal 垃圾值 → cos/sin 与 logits
-> 全 NaN；4.57 无此行为，以下守卫在 4.57 上全部命中失败、零行为差异。
-
-**modeling_moss_vl.py**（主线之上的增量）— ① OutputRecorder 导入 fallback（5.x 搬家）
-② Text RoPE `default` 手算（5.x 移除注册项，手算与 4.57 官方数值一致）③ Text/Vision RoPE
-forward NaN 自愈 ④ create_causal_mask 双签名（5.x 重命名参数）⑤ _get_initial_cache_position 兜底
-
 ```diff
 @@ -44,7 +44,10 @@
  from transformers.processing_utils import Unpack
