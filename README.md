@@ -1,5 +1,8 @@
 # MOSS NPU Model Adaptations
 
+> **想看改了什么、为什么改？** → [PATCH.md](PATCH.md)
+> （相对 HuggingFace stock 原版的逐文件 diff + 每处修改的原因说明）
+
 Drop-in replacements for the `trust_remote_code` code files inside MOSS
 model checkpoints, adding **Ascend NPU (910B, CANN 9.0.0) support** while
 keeping **CUDA/GPU behavior unchanged** (all NPU paths are guarded by
