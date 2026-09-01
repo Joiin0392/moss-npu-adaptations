@@ -6,7 +6,7 @@
 
 ## 一、vlm/MOSS-VL-Realtime-0708/（4.57 主线）
 
-**modeling_moss_vl.py** — ① `empty_cache` NPU 感知：NPU 会话结束后释放 HBM，GPU 路径不变；② realtime 空闲态 busy-wait（`while True: continue`，VideoMllama 参考实现）改 20ms sleep 轮询：裸忙转独占 GIL，同进程的 ASR 解码被饿死（实测 150ms→40-80s，独立进程单忙转线程复现 73× 放大；修复后 132-152ms）。该缺陷存在于 HF stock checkpoint，GPU 部署同样受影响
+**modeling_moss_vl.py** — ① `empty_cache` NPU 感知：NPU 会话结束后释放 HBM，GPU 路径不变；② realtime 空闲忙等修复（详见下）；③ **realtime 解码乱码守卫**：发射守卫只查末字符完整性，采样路径下多字节字符可在字符串中间断裂（后续 token 补全了别的字符、孤儿化前者的尾字节）→ U+FFFD 永久残留（实测：`楼层名`→`楼�名`）；发射时剥离不可恢复的断裂字符（平台中立，GPU 同样受益）；② realtime 空闲态 busy-wait（`while True: continue`，VideoMllama 参考实现）改 20ms sleep 轮询：裸忙转独占 GIL，同进程的 ASR 解码被饿死（实测 150ms→40-80s，独立进程单忙转线程复现 73× 放大；修复后 132-152ms）。该缺陷存在于 HF stock checkpoint，GPU 部署同样受影响
 ```diff
 @@ -2874,8 +2874,13 @@
  

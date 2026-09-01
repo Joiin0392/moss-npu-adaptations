@@ -3604,7 +3604,16 @@ class MossVLForConditionalGeneration(MossVLPreTrainedModel, GenerationMixin):
                     and buf_list[-1] == invalid_token_id
                 )
                 if is_silence_or_ellipsis or is_complete_text or is_invalid_complete:
-                    output_text_queue.put(decoded_text)
+                    # The end-of-buffer guard above only catches an INCOMPLETE
+                    # trailing char. Under sampling, a multi-byte char can also
+                    # break MID-string (the next token completes a different
+                    # char, orphaning the first char's tail bytes) — the
+                    # replacement char then stays in the text forever. Those
+                    # bytes are unrecoverable at this point: drop the broken
+                    # character instead of emitting mojibake.
+                    clean_text = decoded_text.replace("\ufffd", "")
+                    if clean_text:
+                        output_text_queue.put(clean_text)
                     token_buffer.clear()
 
             input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
