@@ -49,28 +49,24 @@ class MossVLImageProcessorFast(Qwen2VLImageProcessorFast):
     """
     # Multi-image batch total pixels limit (read from config)
     multi_image_max_pixels = None
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if not hasattr(self, 'interpolation') or self.interpolation is None:
-            self.interpolation = "BICUBIC"
+    
 
     def _preprocess(
         self,
         images: list["torch.Tensor"],
         do_resize: bool,
         size: SizeDict,
-        interpolation: Optional["F.InterpolationMode"] = None,
-        do_rescale: bool = True,
-        rescale_factor: float = 1 / 255,
-        do_normalize: bool = True,
-        image_mean: Optional[Union[float, list[float]]] = None,
-        image_std: Optional[Union[float, list[float]]] = None,
-        patch_size: int = 16,
-        temporal_patch_size: int = 1,
-        merge_size: int = 2,
-        disable_grouping: Optional[bool] = None,
-        return_tensors: Optional[Union[str, TensorType]] = None,
+        interpolation: Optional["F.InterpolationMode"],
+        do_rescale: bool,
+        rescale_factor: float,
+        do_normalize: bool,
+        image_mean: Optional[Union[float, list[float]]],
+        image_std: Optional[Union[float, list[float]]],
+        patch_size: int,
+        temporal_patch_size: int,
+        merge_size: int,
+        disable_grouping: Optional[bool],
+        return_tensors: Optional[Union[str, TensorType]],
         **kwargs,
     ):
         """Override _preprocess to use custom smart_resize with batch-level max_pixels.
@@ -168,8 +164,8 @@ class MossVLImageProcessorFast(Qwen2VLImageProcessorFast):
             )
             # Reorder dimensions to group grid and patch information for subsequent flattening.
             # (batch, grid_t, grid_h, grid_w, merge_h, merge_w, channel, temp_patch_size, patch_h, patch_w)
-            # NPU supports max 8D tensors; route the 10D permute+reshape through
-            # CPU there. CUDA handles 10D natively — keep it on-device.
+            # NPU ops support at most 8-D tensors; route the 10-D permute+reshape
+            # through CPU there. CUDA handles 10-D natively — keep it on-device.
             patches_device = patches.device
             if patches_device.type == "npu":
                 patches = patches.cpu()
@@ -281,7 +277,7 @@ class MossVLImagesKwargs(ImagesKwargs):
     patch_size: Optional[int]
     temporal_patch_size: Optional[int]
     merge_size: Optional[int]
-    interpolation: Optional[str]
+
 
 
 class MossVLVideosKwargs(VideosKwargs, total=False):

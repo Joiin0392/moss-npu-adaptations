@@ -22,6 +22,5 @@
         0.5
     ],
     "processor_class": "MossVLProcessor",
-    "image_processor_type": "MossVLImageProcessorFast",
-    "interpolation": "BICUBIC"
+    "image_processor_type": "MossVLImageProcessorFast"
 }

@@ -171,6 +171,64 @@ None 字段无副作用。
 +        self.pad_token_id = pad_token_id
 ```
 
+
+**processing_moss_vl.py** — 仅一处：10D permute+reshape 设备感知路由（NPU 算子上限 8 维，
+`device.type=="npu"` 时经 CPU 计算后搬回，CUDA 原生 10D 路径不变）。
+*2026-09-01 上游 review 后最小化*：曾含的 interpolation 显式链、`_preprocess` 签名默认值、
+`__init__` 兜底均已删除——实测证明为死代码（框架对全部 valid kwargs setdefault 后显式传参，
+签名默认值永不生效；BICUBIC 经父类 `resample` 默认 + base 的 resample→interpolation 转换
+天然到达，三配置 pixel_values 逐位一致）。
+
+```diff
+@@ -164,12 +164,17 @@
+             )
+             # Reorder dimensions to group grid and patch information for subsequent flattening.
+             # (batch, grid_t, grid_h, grid_w, merge_h, merge_w, channel, temp_patch_size, patch_h, patch_w)
++            # NPU ops support at most 8-D tensors; route the 10-D permute+reshape
++            # through CPU there. CUDA handles 10-D natively — keep it on-device.
++            patches_device = patches.device
++            if patches_device.type == "npu":
++                patches = patches.cpu()
+             patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+             flatten_patches = patches.reshape(
+                 batch_size,
+                 grid_t * grid_h * grid_w,
+                 channel * temporal_patch_size * patch_size * patch_size,
+-            )
++            ).to(patches_device)
+ 
+             processed_images_grouped[shape] = flatten_patches
+             processed_grids[shape] = [[grid_t, grid_h, grid_w]] * batch_size
+```
+
+**video_processing_moss_vl.py** — 同款 10D 路由（唯一修改）：
+
+```diff
+@@ -1147,12 +1147,17 @@
+                 merge_size,
+                 patch_size,
+             )
++            patches_device = patches.device
++            # NPU: max 8D tensors — route the 10D permute+reshape through CPU.
++            # CUDA handles 10D natively — keep it on-device.
++            if patches_device.type == "npu":
++                patches = patches.cpu()
+             patches = patches.permute(0, 1, 4, 7, 5, 8, 3, 2, 6, 9)
+             flatten_patches = patches.reshape(
+                 batch_size,
+                 grid_t * grid_h * grid_w,
+                 channel * temporal_patch_size * patch_size * patch_size,
+-            )
++            ).to(patches_device)
+ 
+             processed_videos_grouped[shape] = flatten_patches
+             processed_grids[shape] = [[grid_t, grid_h, grid_w]] * batch_size
+```
+
+**preprocessor_config.json** — 已还原 stock（原 +`interpolation:BICUBIC` 为 no-op：
+valid kwarg 名是 `resample`，config 里的 `interpolation` 键不被框架读取；有无该字段
+pixel_values 逐位一致）。
+
 ---
 
 ---
