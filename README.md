@@ -59,7 +59,12 @@ OutputRecorder import fallback, RoPE inv_freq load-corruption self-repair
 (text+vision), `create_causal_mask` dual signature, `_get_initial_cache_position`
 fallback, `pad_token_id` config field. `tts/MOSS-TTS-Nano-100M-tf5x/` adds the
 gpt2_decoder `_base/_dim` repair metadata (consumed by the Demo-side compat
-branch's post-load repair). None of it is needed on 4.57.x; all of it is
+branch's post-load repair). One exception: the RoPE inv_freq load-corruption
+self-repair is **also required on 4.57.x + NPU** — corrupted inv_freq values
+(9e-5, 3e-41, 0, 1e27) were observed loading the state dict on torch_npu with
+transformers 4.57.6; a standalone 4.57-compatible patch has been prepared and
+is pending submission to the HF model repo
+(OpenMOSS-Team/MOSS-VL-Realtime). Everything else is 5.x-only and
 version-guarded on 5.x. Apply with `--tf5x` after the base files.
 
 ## Compatibility matrix
