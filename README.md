@@ -62,9 +62,9 @@ gpt2_decoder `_base/_dim` repair metadata (consumed by the Demo-side compat
 branch's post-load repair). One exception: the RoPE inv_freq load-corruption
 self-repair is **also required on 4.57.x + NPU** — corrupted inv_freq values
 (9e-5, 3e-41, 0, 1e27) were observed loading the state dict on torch_npu with
-transformers 4.57.6; a standalone 4.57-compatible patch has been prepared and
-is pending submission to the HF model repo
-(OpenMOSS-Team/MOSS-VL-Realtime). Everything else is 5.x-only and
+transformers 4.57.6; a standalone 4.57-compatible patch has been submitted to
+the HF model repo ([community PR #4](https://huggingface.co/OpenMOSS-Team/MOSS-VL-Realtime/discussions/4)).
+Everything else is 5.x-only and
 version-guarded on 5.x. Apply with `--tf5x` after the base files.
 
 ## Compatibility matrix
